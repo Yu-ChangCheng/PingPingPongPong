@@ -31,6 +31,14 @@ def _lagged_window_return(s: pd.Series, total: int, skip: int) -> pd.Series:
 def build_panel(prices: pd.DataFrame, sectors: dict[str, str],
                 benchmark: str = "SPY") -> pd.DataFrame:
     """Per-ticker feature engineering. Returns a long panel (date, ticker, features...)."""
+    need = {"date", "ticker", "open", "high", "low", "close", "adj_close", "volume"}
+    miss = need - set(prices.columns)
+    if miss:
+        raise ValueError(f"prices missing columns {sorted(miss)} — got {list(prices.columns)}")
+    if benchmark not in prices["ticker"].values:
+        raise ValueError(
+            f"benchmark {benchmark!r} not in price panel — need SPY (and peers) downloaded.")
+
     df = prices.copy()
     df["adj_close"] = df["adj_close"].astype(float)
     df = df.sort_values(["ticker", "date"]).reset_index(drop=True)
@@ -66,7 +74,11 @@ def build_panel(prices: pd.DataFrame, sectors: dict[str, str],
         d["retvol_63d"]     = r.rolling(63, min_periods=40).std().shift(1)
         return d
 
-    df = df.groupby("ticker", group_keys=False).apply(per_ticker).reset_index(drop=True)
+    # Concat per group — avoids pandas GroupBy.apply dropping `ticker` on some versions.
+    chunks: list[pd.DataFrame] = []
+    for _, g in df.groupby("ticker", sort=False):
+        chunks.append(per_ticker(g.copy()))
+    df = pd.concat(chunks, ignore_index=True)
 
     bench = (df[df["ticker"] == benchmark][["date", "ret_1d"]]
              .rename(columns={"ret_1d": "ret_bench"}))
@@ -83,7 +95,10 @@ def build_panel(prices: pd.DataFrame, sectors: dict[str, str],
         d["idiovol_63d"] = resid.rolling(63, min_periods=40).std().shift(1)
         return d
 
-    df = df.groupby("ticker", group_keys=False).apply(beta_block).reset_index(drop=True)
+    chunks_b: list[pd.DataFrame] = []
+    for _, g in df.groupby("ticker", sort=False):
+        chunks_b.append(beta_block(g.copy()))
+    df = pd.concat(chunks_b, ignore_index=True)
 
     df["sector"] = df["ticker"].map(sectors).fillna("Other")
     df["ind_mom"] = (df.groupby(["date", "sector"])["mom_21d"]
