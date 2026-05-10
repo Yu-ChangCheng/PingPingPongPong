@@ -26,6 +26,8 @@ CORE_UNIVERSE: tuple[str, ...] = (
     "WFC", "GS", "MS", "C", "BRK-B", "UNH", "JNJ", "PFE", "MRK", "LLY",
     "ABT", "TMO", "DHR", "XOM", "CVX", "COP", "SLB", "CAT", "BA", "DE",
     "GE", "MMM", "HON", "UPS",
+    # User-added core names (Yahoo symbols)
+    "HOOD", "SOFI", "POET", "SMR", "PWR", "PLTR",
 )
 
 CORE_SECTOR_MAP: dict[str, str] = {
@@ -42,6 +44,9 @@ CORE_SECTOR_MAP: dict[str, str] = {
     "XOM": "Energy", "CVX": "Energy", "COP": "Energy", "SLB": "Energy",
     "CAT": "Indus", "BA": "Indus", "DE": "Indus", "GE": "Indus", "MMM": "Indus",
     "HON": "Indus", "UPS": "Indus",
+    "HOOD": "Fin", "SOFI": "Fin",
+    "POET": "Tech", "PLTR": "Tech",
+    "SMR": "Energy", "PWR": "Indus",
 }
 
 INDEX_SECTOR_LABELS: dict[str, str] = {"SPY": "Index", "QQQ": "Index"}
