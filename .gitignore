@@ -1,0 +1,28 @@
+__pycache__/
+*.py[cod]
+*.pkl
+*.pyd
+.Python
+*.so
+data_cache/
+.venv/
+.env
+.env.*
+!.env.example
+.ipynb_checkpoints/
+.DS_Store
+Thumbs.db
+
+# Editors / tooling (don't ship Cursor or local IDE junk to GitHub)
+.cursor/
+.idea/
+*.swp
+*.swo
+
+# Packaging / tooling
+pip-log.txt
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+dist/
+*.egg-info/

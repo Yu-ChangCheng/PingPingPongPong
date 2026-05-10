@@ -1,0 +1,6 @@
+action,ticker,shares,limit_price,notional,rationale
+BUY,AKAM,6,147.71,886.26,OPEN long position (entered top-N basket)
+BUY,AMD,2,455.19,910.38,OPEN long position (entered top-N basket)
+BUY,INTC,8,124.92,999.36,OPEN long position (entered top-N basket)
+BUY,MU,1,746.81,746.81,OPEN long position (entered top-N basket)
+BUY,SMCI,28,35.37,990.36,OPEN long position (entered top-N basket)
