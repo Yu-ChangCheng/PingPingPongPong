@@ -116,6 +116,12 @@ def _equal_weight_targets(today_preds: pd.Series, n_long: int, n_short: int
     return targets
 
 
+def _finite_money(x: float, default: float = 0.0) -> float:
+    """Treat NaN/inf cash/equity as default (pandas MTM sums can emit NaN)."""
+    xf = float(x)
+    return xf if np.isfinite(xf) else default
+
+
 def simulate_portfolio(preds_df: pd.DataFrame,
                        panel: pd.DataFrame,
                        cfg: PortfolioConfig) -> tuple[pd.DataFrame, pd.DataFrame, PortfolioState]:
@@ -179,11 +185,20 @@ def simulate_portfolio(preds_df: pd.DataFrame,
         prices_today = p.loc[d]
         mtm = sum(state.holdings.get(t, 0) * prices_today.get(t, np.nan)
                   for t in state.holdings)
-        if np.isnan(mtm):
-            mtm = sum(state.holdings.get(t, 0) * prices_today.get(t, prices_today.dropna().mean())
+        if not np.isfinite(mtm):
+            filler = prices_today.dropna().mean()
+            filler_f = float(filler) if np.isfinite(filler) else 0.0
+            mtm = sum(state.holdings.get(t, 0)
+                      * float(prices_today.get(t, filler_f))
                       for t in state.holdings)
+        mtm = _finite_money(mtm, 0.0)
+
+        cash = _finite_money(state.cash)
+        unsettled = _finite_money(state.unsettled_total)
         # Equity (NAV) includes unsettled funds; deployable cash does not.
-        equity = state.cash + state.unsettled_total + (mtm or 0)
+        # NB: `(mtm or 0)` is wrong — float('nan') is truthy and poisons sums.
+        equity = cash + unsettled + mtm
+        equity = _finite_money(equity, cash + unsettled)
 
         # 3) Compute target weights/shares from today's predictions.
         target_w = _equal_weight_targets(preds.loc[d], cfg.n_long, cfg.n_short)
@@ -192,7 +207,13 @@ def simulate_portfolio(preds_df: pd.DataFrame,
             px = float(prices_today.get(tkr, np.nan))
             if not np.isfinite(px) or px <= 0:
                 continue
-            target_shares[tkr] = int(np.floor(equity * w / px))
+            wf = _finite_money(float(w))
+            if wf <= 0:
+                continue
+            raw_lots = equity * wf / px
+            if not np.isfinite(raw_lots):
+                continue
+            target_shares[tkr] = int(np.floor(raw_lots))
 
         # 4) Build sell + buy lists; execute SELLs first, then BUYs.
         all_tickers = set(target_shares.keys()) | set(state.holdings.keys())
@@ -454,9 +475,18 @@ def make_today_orders(latest_preds: pd.DataFrame,
     # Using current_state.equity = cash + holdings * latest close.
     holdings_value = sum(current_state.holdings.get(t, 0) * today_prices.get(t, np.nan)
                          for t in current_state.holdings)
-    if np.isnan(holdings_value):
-        holdings_value = 0.0
-    equity = current_state.cash + holdings_value
+    if not np.isfinite(holdings_value):
+        mean_px_t = float(today_prices.dropna().mean()) if len(today_prices.dropna()) else 0.0
+        if not np.isfinite(mean_px_t):
+            mean_px_t = 0.0
+        holdings_value = sum(
+            current_state.holdings.get(t, 0)
+            * (float(today_prices.loc[t])
+               if (t in today_prices.index and pd.notna(today_prices.loc[t]))
+               else mean_px_t)
+            for t in current_state.holdings)
+        holdings_value = _finite_money(holdings_value, 0.0)
+    equity = _finite_money(current_state.cash) + _finite_money(holdings_value, 0.0)
 
     today_pred = (latest_preds.set_index("ticker")["y_pred"]
                   if "y_pred" in latest_preds.columns else
@@ -468,7 +498,11 @@ def make_today_orders(latest_preds: pd.DataFrame,
         px = float(today_prices.get(tkr, np.nan))
         if not np.isfinite(px) or px <= 0:
             continue
-        target_shares[tkr] = int(np.floor(equity * w / px))
+        wf = _finite_money(float(w))
+        lots = equity * wf / px
+        if wf <= 0 or not np.isfinite(lots):
+            continue
+        target_shares[tkr] = int(np.floor(lots))
 
     orders: list[Order] = []
     all_tkrs = set(target_shares.keys()) | set(current_state.holdings.keys())

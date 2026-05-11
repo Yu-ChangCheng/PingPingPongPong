@@ -27,14 +27,14 @@ import pandas as pd
 
 # A reasonably broad watchlist of liquid US names. Tweak freely.
 DEFAULT_WATCHLIST: tuple[str, ...] = (
-    "PLTR", "COIN", "SHOP", "SQ", "SNOW", "PANW", "CRWD", "ZS", "DDOG", "NET",
+    "PLTR", "COIN", "SHOP", "XYZ", "SNOW", "PANW", "CRWD", "ZS", "DDOG", "NET",
     "MDB", "ABNB", "UBER", "LYFT", "RIVN", "LCID", "F", "GM", "PYPL", "SOFI",
     "HOOD", "BIDU", "PDD", "JD", "BABA", "SE", "MELI", "DASH", "ROKU", "ZM",
     "DOCU", "TWLO", "OKTA", "FSLR", "ENPH", "PLUG", "RUN", "RIOT", "MSTR", "MARA",
-    "BBBY", "AMC", "GME", "SPCE", "NIO", "XPEV", "LI", "TDOC", "PINS", "SNAP",
-    "ETSY", "EBAY", "WBD", "PARA", "T", "VZ", "CHTR", "TMUS", "GLW", "MU",
+    "AMC", "GME", "SPCE", "NIO", "XPEV", "LI", "TDOC", "PINS", "SNAP",
+    "ETSY", "EBAY", "WBD", "T", "VZ", "CHTR", "TMUS", "GLW", "MU",
     "SMCI", "ARM", "TSM", "ASML", "INTU", "NOW", "WDAY", "TEAM", "FTNT", "CDNS",
-    "SNPS", "ADSK", "ROP", "KEYS", "ANET", "CIEN", "JNPR", "AKAM", "DELL", "HPQ",
+    "SNPS", "ADSK", "ROP", "KEYS", "ANET", "CIEN", "AKAM", "DELL", "HPQ",
     "HPE", "STX", "WDC", "TXN", "MCHP", "ON", "ADI", "NXPI", "MPWR", "LRCX",
     "AMAT", "KLAC", "ORLY", "AZO", "CMG", "DPZ", "TJX", "ROST", "ULTA", "BBY",
 )
