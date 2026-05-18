@@ -457,45 +457,39 @@ def compute_hit_rate(history_predictions: pd.DataFrame) -> float:
     return float(h["correct"].mean())
 
 
-def make_today_orders(latest_preds: pd.DataFrame,
-                      panel: pd.DataFrame,
-                      current_state: PortfolioState,
-                      cfg: PortfolioConfig) -> list[Order]:
-    """What to BUY / SELL tomorrow morning to align with today's predictions.
-
-    `current_state` is the portfolio AFTER the last simulated day. Today's
-    predictions were computed at *today's* close; we now compute the deltas
-    needed to reach the new target basket.
-    """
+def _close_prices(panel: pd.DataFrame) -> pd.Series:
+    """Latest adjusted close per ticker (session close proxy for live rotation)."""
     p = panel[["date", "ticker", "adj_close"]].copy()
     p["date"] = pd.to_datetime(p["date"])
-    last_date = p["date"].max()
-    today_prices = p[p["date"] == last_date].set_index("ticker")["adj_close"]
+    return p.sort_values("date").groupby("ticker")["adj_close"].last()
 
-    # Using current_state.equity = cash + holdings * latest close.
-    holdings_value = sum(current_state.holdings.get(t, 0) * today_prices.get(t, np.nan)
-                         for t in current_state.holdings)
+
+def _equity_at_close(state: PortfolioState, prices: pd.Series) -> float:
+    holdings_value = sum(
+        state.holdings.get(t, 0) * float(prices.get(t, np.nan))
+        for t in state.holdings)
     if not np.isfinite(holdings_value):
-        mean_px_t = float(today_prices.dropna().mean()) if len(today_prices.dropna()) else 0.0
-        if not np.isfinite(mean_px_t):
-            mean_px_t = 0.0
+        filler = float(prices.dropna().mean()) if len(prices.dropna()) else 0.0
+        if not np.isfinite(filler):
+            filler = 0.0
         holdings_value = sum(
-            current_state.holdings.get(t, 0)
-            * (float(today_prices.loc[t])
-               if (t in today_prices.index and pd.notna(today_prices.loc[t]))
-               else mean_px_t)
-            for t in current_state.holdings)
-        holdings_value = _finite_money(holdings_value, 0.0)
-    equity = _finite_money(current_state.cash) + _finite_money(holdings_value, 0.0)
+            state.holdings.get(t, 0)
+            * (float(prices[t]) if (t in prices.index and pd.notna(prices[t])) else filler)
+            for t in state.holdings)
+    return (_finite_money(state.cash) + _finite_money(state.unsettled_total)
+            + _finite_money(holdings_value, 0.0))
 
+
+def _target_shares_at_close(latest_preds: pd.DataFrame, prices: pd.Series,
+                            equity: float, cfg: PortfolioConfig) -> dict[str, int]:
+    """Equal-weight share counts for today's top ``n_long`` names at the close."""
     today_pred = (latest_preds.set_index("ticker")["y_pred"]
                   if "y_pred" in latest_preds.columns else
                   latest_preds.set_index("ticker").iloc[:, 0])
     target_w = _equal_weight_targets(today_pred, cfg.n_long, cfg.n_short)
-
     target_shares: dict[str, int] = {}
     for tkr, w in target_w.items():
-        px = float(today_prices.get(tkr, np.nan))
+        px = float(prices.get(tkr, np.nan))
         if not np.isfinite(px) or px <= 0:
             continue
         wf = _finite_money(float(w))
@@ -503,30 +497,186 @@ def make_today_orders(latest_preds: pd.DataFrame,
         if wf <= 0 or not np.isfinite(lots):
             continue
         target_shares[tkr] = int(np.floor(lots))
+    return target_shares
 
-    orders: list[Order] = []
-    all_tkrs = set(target_shares.keys()) | set(current_state.holdings.keys())
-    for tkr in sorted(all_tkrs):
-        cur = current_state.holdings.get(tkr, 0)
-        tgt = target_shares.get(tkr, 0)
-        if cur == tgt:
+
+def make_today_orders(latest_preds: pd.DataFrame,
+                      panel: pd.DataFrame,
+                      current_state: PortfolioState,
+                      cfg: PortfolioConfig) -> list[Order]:
+    """Close-only rotation into exactly ``n_long`` names (default 5).
+
+    After the cash session, SELL anything not in today's top-N (full exit),
+    then BUY/trim the five basket names to ~1/N of equity using today's close
+    as the limit. SELLs are listed before BUYs.
+    """
+    prices = _close_prices(panel)
+    equity = _equity_at_close(current_state, prices)
+    targets = _target_shares_at_close(latest_preds, prices, equity, cfg)
+    basket = set(targets.keys())
+
+    sells: list[Order] = []
+    buys: list[Order] = []
+
+    for tkr, cur in sorted(current_state.holdings.items()):
+        if cur <= 0:
             continue
-        px = float(today_prices.get(tkr, np.nan))
+        tgt = targets.get(tkr, 0) if tkr in basket else 0
+        if cur <= tgt:
+            continue
+        px = float(prices.get(tkr, np.nan))
         if not np.isfinite(px) or px <= 0:
             continue
-        delta = tgt - cur
-        notional = abs(delta) * px
+        sell_sh = cur - tgt
+        notional = sell_sh * px
         if notional < cfg.min_trade_dollars and tgt != 0:
             continue
-        if delta > 0:
-            rationale = ("OPEN long position (entered top-N basket)"
-                         if cur == 0 else "INCREASE long position")
-            orders.append(Order("BUY", tkr, int(delta), px, notional, rationale))
+        rationale = ("SELL at close — rotate out (dropped from top-N)"
+                     if tgt == 0 else
+                     "SELL at close — trim to 1/N equity")
+        sells.append(Order("SELL", tkr, int(sell_sh), px, notional, rationale))
+
+    for tkr in sorted(targets):
+        tgt = targets[tkr]
+        cur = current_state.holdings.get(tkr, 0)
+        if cur >= tgt:
+            continue
+        px = float(prices.get(tkr, np.nan))
+        if not np.isfinite(px) or px <= 0:
+            continue
+        buy_sh = tgt - cur
+        notional = buy_sh * px
+        if notional < cfg.min_trade_dollars:
+            continue
+        rationale = ("BUY at close — rotate in (new top-N)"
+                     if cur == 0 else
+                     "BUY at close — add to 1/N equity")
+        buys.append(Order("BUY", tkr, int(buy_sh), px, notional, rationale))
+    return sells + buys
+
+
+def apply_close_orders(state: PortfolioState, orders: list[Order],
+                       panel: pd.DataFrame, cfg: PortfolioConfig,
+                       trade_date: str) -> PortfolioState:
+    """Apply close orders to ``state`` (T+0 cash or T+1 unsettled on sells)."""
+    prices = _close_prices(panel)
+    cash = _finite_money(state.cash)
+    holdings = dict(state.holdings)
+    entry_prices = dict(state.entry_prices)
+    entry_dates = dict(state.entry_dates)
+    unsettled = list(state.unsettled)
+
+    for o in orders:
+        px = float(prices.get(o.ticker, o.limit_price))
+        if not np.isfinite(px) or px <= 0:
+            px = o.limit_price
+        if o.action == "SELL":
+            cur = holdings.get(o.ticker, 0)
+            sh = min(int(o.shares), cur)
+            if sh <= 0:
+                continue
+            notional = sh * px
+            net = notional * (1 - cfg.cost_bps / 1e4)
+            if cfg.settle_days <= 0:
+                cash += net
+            else:
+                unsettled.append((trade_date, net))  # simplified T+1 tag
+            new_cur = cur - sh
+            if new_cur <= 0:
+                holdings.pop(o.ticker, None)
+                entry_prices.pop(o.ticker, None)
+                entry_dates.pop(o.ticker, None)
+            else:
+                holdings[o.ticker] = new_cur
         else:
-            rationale = ("CLOSE position (left top-N basket)" if tgt == 0
-                         else "REDUCE position")
-            orders.append(Order("SELL", tkr, int(-delta), px, notional, rationale))
-    return orders
+            cost_each = px * cfg.cost_bps / 1e4
+            unit = px + cost_each
+            if unit <= 0:
+                continue
+            affordable = int(cash // unit) if unit > 0 else 0
+            sh = min(int(o.shares), max(affordable, 0))
+            if sh <= 0:
+                continue
+            notional = sh * px
+            if notional < cfg.min_trade_dollars:
+                continue
+            cash -= notional + notional * cfg.cost_bps / 1e4
+            cur = holdings.get(o.ticker, 0)
+            new_cur = cur + sh
+            entry_prices[o.ticker] = (
+                px if cur == 0
+                else (entry_prices.get(o.ticker, px) * cur + px * sh) / max(new_cur, 1)
+            )
+            if cur == 0:
+                entry_dates[o.ticker] = trade_date
+            holdings[o.ticker] = new_cur
+
+    holdings = {k: int(v) for k, v in holdings.items() if v > 0}
+    return PortfolioState(cash=cash, holdings=holdings,
+                          entry_prices=entry_prices, entry_dates=entry_dates,
+                          unsettled=unsettled)
+
+
+def _buy_orders_after_sells(state: PortfolioState, targets: dict[str, int],
+                            prices: pd.Series, cfg: PortfolioConfig) -> list[Order]:
+    """BUY leg only — run after SELLs so sizing uses post-liquidation equity."""
+    buys: list[Order] = []
+    for tkr in sorted(targets):
+        tgt = targets[tkr]
+        cur = state.holdings.get(tkr, 0)
+        if cur >= tgt:
+            continue
+        px = float(prices.get(tkr, np.nan))
+        if not np.isfinite(px) or px <= 0:
+            continue
+        buy_sh = tgt - cur
+        notional = buy_sh * px
+        if notional < cfg.min_trade_dollars:
+            continue
+        rationale = ("BUY at close — rotate in (new top-N)"
+                     if cur == 0 else
+                     "BUY at close — add to 1/N equity")
+        buys.append(Order("BUY", tkr, int(buy_sh), px, notional, rationale))
+    return buys
+
+
+def rotate_at_close(state: PortfolioState,
+                    latest_preds: pd.DataFrame,
+                    panel: pd.DataFrame,
+                    cfg: PortfolioConfig,
+                    trade_date: str) -> tuple[PortfolioState, list[Order]]:
+    """Close rotation: SELLs first (frees cash), then BUYs sized on post-sell equity."""
+    prices = _close_prices(panel)
+    equity = _equity_at_close(state, prices)
+    targets = _target_shares_at_close(latest_preds, prices, equity, cfg)
+    basket = set(targets.keys())
+
+    sells: list[Order] = []
+    for tkr, cur in sorted(state.holdings.items()):
+        if cur <= 0:
+            continue
+        tgt = targets.get(tkr, 0) if tkr in basket else 0
+        if cur <= tgt:
+            continue
+        px = float(prices.get(tkr, np.nan))
+        if not np.isfinite(px) or px <= 0:
+            continue
+        sell_sh = cur - tgt
+        notional = sell_sh * px
+        if notional < cfg.min_trade_dollars and tgt != 0:
+            continue
+        rationale = ("SELL at close — rotate out (dropped from top-N)"
+                     if tgt == 0 else
+                     "SELL at close — trim to 1/N equity")
+        sells.append(Order("SELL", tkr, int(sell_sh), px, notional, rationale))
+
+    mid = apply_close_orders(state, sells, panel, cfg, trade_date) if sells else state
+    equity_mid = _equity_at_close(mid, prices)
+    targets = _target_shares_at_close(latest_preds, prices, equity_mid, cfg)
+    buys = _buy_orders_after_sells(mid, targets, prices, cfg)
+    orders = sells + buys
+    new_state = apply_close_orders(mid, buys, panel, cfg, trade_date) if buys else mid
+    return new_state, orders
 
 
 def build_daily_views(history: pd.DataFrame,
@@ -864,48 +1014,30 @@ def make_holdings_view(state: PortfolioState,
                        cfg: PortfolioConfig | None = None) -> pd.DataFrame:
     """Tidy table of current holdings for the dashboard.
 
-    Adds explicit decision-rule columns (stop_loss_price, days_held, time_stop_left)
-    so the user can see exactly when to bail on a position.
+    Stop-loss / time-stop rules are intentionally omitted here — the live
+    rotation is driven purely by basket membership (sell when the model drops
+    a name, buy the replacement).
     """
-    cfg = cfg or PortfolioConfig()
+    cfg = cfg or PortfolioConfig()  # unused, kept for API compatibility
+    cols = ["ticker", "shares", "entry_price", "current_price",
+            "market_value", "unrealized_pnl", "unrealized_pct"]
     if not state.holdings:
-        return pd.DataFrame(columns=["ticker", "shares", "entry_price",
-                                      "current_price", "market_value",
-                                      "unrealized_pnl", "unrealized_pct",
-                                      "stop_loss_price", "days_held",
-                                      "time_stop_left", "decision"])
+        return pd.DataFrame(columns=cols)
     p = panel[["date", "ticker", "adj_close"]].copy()
     p["date"] = pd.to_datetime(p["date"])
-    last_date = p["date"].max()
-    today_prices = p[p["date"] == last_date].set_index("ticker")["adj_close"]
+    # Per-ticker last bar — avoids n/a when one name's yfinance row lags the panel max date.
+    today_prices = p.sort_values("date").groupby("ticker")["adj_close"].last()
 
     rows = []
     for tkr, shares in state.holdings.items():
         px = float(today_prices.get(tkr, np.nan))
         ep = float(state.entry_prices.get(tkr, np.nan))
-        ed_str = state.entry_dates.get(tkr)
-        ed = pd.Timestamp(ed_str) if ed_str else last_date
-        mv = shares * px
+        mv = shares * px if np.isfinite(px) else np.nan
         upnl = (px - ep) * shares if np.isfinite(ep) and np.isfinite(px) else np.nan
-        upct = (px / ep - 1) if np.isfinite(ep) and ep > 0 else np.nan
-
-        stop_px = ep * (1 - cfg.stop_loss_pct) if np.isfinite(ep) else np.nan
-        # Trading days held: count business days between entry and today.
-        days_held = int(pd.bdate_range(ed, last_date).size) - 1 if ed_str else 0
-        time_stop_left = max(cfg.time_stop_days - days_held, 0)
-
-        if np.isfinite(upct) and upct <= -cfg.stop_loss_pct:
-            decision = "STOP-LOSS HIT \u2192 SELL"
-        elif time_stop_left == 0:
-            decision = "TIME-STOP \u2192 SELL tomorrow"
-        else:
-            decision = f"HOLD (rotate when basket changes)"
+        upct = (px / ep - 1) if np.isfinite(ep) and ep > 0 and np.isfinite(px) else np.nan
         rows.append({"ticker": tkr, "shares": shares,
-                      "entry_price": ep, "current_price": px,
-                      "market_value": mv,
-                      "unrealized_pnl": upnl, "unrealized_pct": upct,
-                      "stop_loss_price": stop_px,
-                      "days_held": days_held,
-                      "time_stop_left": time_stop_left,
-                      "decision": decision})
-    return pd.DataFrame(rows).sort_values("market_value", ascending=False)
+                     "entry_price": ep, "current_price": px,
+                     "market_value": mv,
+                     "unrealized_pnl": upnl, "unrealized_pct": upct})
+    df = pd.DataFrame(rows)[cols]
+    return df.sort_values("market_value", ascending=False, na_position="last")

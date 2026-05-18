@@ -14,8 +14,10 @@ Run locally:
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -33,9 +35,9 @@ from pipeline.hotstocks import (DEFAULT_WATCHLIST, HotConfig,
 from pipeline.model import fit_full_model, predict_latest, walk_forward_rf
 from pipeline.tracker import update_tracker
 from pipeline.portfolio import (PortfolioConfig, PortfolioState,
-                                 simulate_portfolio, compute_stats,
-                                 make_today_orders, make_holdings_view,
-                                 build_daily_views)
+                                 _finite_money, simulate_portfolio,
+                                 compute_stats, make_holdings_view,
+                                 rotate_at_close, build_daily_views)
 from pipeline.report import build_site
 
 
@@ -63,17 +65,66 @@ def detect_hot_additions(cfg) -> tuple[list[str], pd.DataFrame]:
     return additions, scored
 
 
+def _live_holding_tickers(cfg) -> list[str]:
+    """Open positions from persisted live sim state (if any)."""
+    path = cfg.docs_data_dir / "live_portfolio.json"
+    if not path.exists():
+        return []
+    with path.open(encoding="utf-8") as fh:
+        saved = json.load(fh)
+    return [t for t, sh in saved.get("holdings", {}).items() if int(sh) > 0]
+
+
+def _append_prices(prices: pd.DataFrame, tickers: list[str], cfg,
+                   *, refresh: bool) -> pd.DataFrame:
+    """Merge OHLCV for tickers not already in `prices` (e.g. prior hot adds)."""
+    need = [t for t in tickers if t not in set(prices["ticker"].unique())]
+    if not need:
+        return prices
+    extra = download_prices(need, cfg.start, cfg.end, cfg.cache_dir, refresh=refresh)
+    out = (pd.concat([prices, extra], ignore_index=True)
+           .drop_duplicates(["date", "ticker"])
+           .sort_values(["date", "ticker"]))
+    for tkr in need:
+        cfg.sectors.setdefault(tkr, "Other")
+    return out
+
+
 def main(refresh: bool = True) -> None:
-    cfg = DEFAULT_CONFIG
+    # Optional: freeze history to a specific calendar day (yfinance `end` is
+    # exclusive, so PIPELINE_END=2026-05-14 → last bar is 2026-05-13 US session).
+    _end = os.environ.get("PIPELINE_END", "").strip()
+    cfg = replace(DEFAULT_CONFIG, end=_end) if _end else DEFAULT_CONFIG
     print(f"[{datetime.now().isoformat(timespec='seconds')}] Starting daily run")
     print(f"  universe = {len(cfg.universe)} stocks + {len(cfg.indices)} indices "
           f"(UNIVERSE={DEFAULT_UNIVERSE_MODE}; set UNIVERSE=core for legacy 54-stock sleeve)")
+    if _end:
+        print(f"  PIPELINE_END={_end} (yfinance end is exclusive; predictions/orders "
+              f"use the last session on or before that date)")
 
     print("Step 1/6: download core prices...")
     prices = download_prices(cfg.all_tickers, cfg.start, cfg.end,
                              cfg.cache_dir, refresh=refresh)
+    last_close_date = pd.Timestamp(prices["date"].max()).normalize()
     print(f"  loaded {len(prices):,} rows | {prices['date'].min().date()} -> "
-          f"{prices['date'].max().date()}")
+          f"{last_close_date.date()}")
+
+    # We only trust the latest bar if the US cash session has actually finished
+    # for that day (~20:00 UTC summer / 21:00 UTC winter). If the workflow runs
+    # before close, yfinance may return a stale-or-partial last row; warn so
+    # the orders can be skipped instead of placed on bad data.
+    now_utc = pd.Timestamp.now(tz="UTC")
+    today_utc_date = now_utc.normalize().tz_localize(None)
+    if last_close_date < today_utc_date:
+        weekday = today_utc_date.dayofweek  # 0=Mon..6=Sun
+        if weekday < 5 and now_utc.hour >= 21:
+            print(f"  WARNING: latest close in yfinance is {last_close_date.date()} "
+                  f"but today is {today_utc_date.date()} and the cash session "
+                  f"should have closed. Orders below will be based on the "
+                  f"prior session's close.")
+        else:
+            print(f"  note: latest close in yfinance is {last_close_date.date()} "
+                  f"(most recent completed US session).")
 
     print("Step 2/6: scan for hot stocks...")
     hot_additions, hot_scored = detect_hot_additions(cfg)
@@ -88,6 +139,14 @@ def main(refresh: bool = True) -> None:
             cfg.sectors.setdefault(tkr, "Other")
     else:
         print("  no hot stocks above threshold today")
+
+    held = _live_holding_tickers(cfg)
+    if held:
+        before = set(prices["ticker"].unique())
+        prices = _append_prices(prices, held, cfg, refresh=refresh)
+        added = sorted(set(prices["ticker"].unique()) - before)
+        if added:
+            print(f"  ensured price history for open live holdings: {added}")
 
     if not hot_scored.empty:
         cfg.docs_data_dir.mkdir(parents=True, exist_ok=True)
@@ -224,17 +283,20 @@ def main(refresh: bool = True) -> None:
     else:
         live_state = PortfolioState(cash=pf_cfg.starting_capital)
 
-    today_orders = make_today_orders(latest, panel, live_state, pf_cfg)
-    # Orders represent tomorrow's planned trades; live portfolio updates AFTER
-    # actual fills are observed by the next daily run (simulated here).
-    holdings_df = make_holdings_view(live_state, panel, pf_cfg)
+    today_iso = pd.Timestamp(latest["date"].max()).strftime("%Y-%m-%d")
+    # Close-only rotation: always <= n_long names, fills at today's close.
+    post_close_state = live_state
+    today_orders: list = []
+    if not pre_live_start:
+        post_close_state, today_orders = rotate_at_close(
+            live_state, latest, panel, pf_cfg, today_iso)
+    holdings_df = make_holdings_view(post_close_state, panel, pf_cfg)
     pd.DataFrame([o.to_dict() for o in today_orders]).to_csv(
         cfg.docs_data_dir / "orders_today.csv", index=False)
     holdings_df.to_csv(cfg.docs_data_dir / "holdings.csv", index=False)
 
     import json
-    p_last = panel[panel["date"] == panel["date"].max()].set_index("ticker")
-    today_iso = pd.Timestamp(latest["date"].max()).strftime("%Y-%m-%d")
+    p_last = panel.sort_values("date").groupby("ticker")["adj_close"].last()
 
     if pre_live_start:
         # Keep JSON + history clean until the first on-or-after start date.
@@ -252,35 +314,11 @@ def main(refresh: bool = True) -> None:
                        "last_run": datetime.now(timezone.utc).isoformat()}, fh, indent=2)
         live_history.to_csv(live_history_path, index=False)
     else:
-        # Persist updated state (apply orders against latest close as proxy fill).
-        cash = live_state.cash
-        holdings = dict(live_state.holdings)
-        entry_prices = dict(live_state.entry_prices)
-        entry_dates = dict(live_state.entry_dates)
-        for o in today_orders:
-            px = (float(p_last.loc[o.ticker, "adj_close"])
-                  if o.ticker in p_last.index else o.limit_price)
-            if o.action == "BUY":
-                cash -= o.shares * px * (1 + pf_cfg.cost_bps / 1e4)
-                cur = holdings.get(o.ticker, 0)
-                new_qty = cur + o.shares
-                entry_prices[o.ticker] = ((entry_prices.get(o.ticker, px) * cur + px * o.shares) / new_qty
-                                            if new_qty > 0 else px)
-                if cur == 0:
-                    entry_dates[o.ticker] = today_iso
-                holdings[o.ticker] = new_qty
-            else:
-                cash += o.shares * px * (1 - pf_cfg.cost_bps / 1e4)
-                holdings[o.ticker] = holdings.get(o.ticker, 0) - o.shares
-                if holdings[o.ticker] <= 0:
-                    holdings.pop(o.ticker, None)
-                    entry_prices.pop(o.ticker, None)
-                    entry_dates.pop(o.ticker, None)
-        new_state = PortfolioState(cash=cash, holdings=holdings,
-                                     entry_prices=entry_prices, entry_dates=entry_dates)
-        new_holdings_value = sum(qty * float(p_last.loc[t, "adj_close"])
-                                 for t, qty in holdings.items() if t in p_last.index)
-        new_equity = cash + new_holdings_value
+        new_state = post_close_state
+        new_holdings_value = sum(
+            qty * float(p_last.loc[t])
+            for t, qty in new_state.holdings.items() if t in p_last.index)
+        new_equity = _finite_money(new_state.cash) + _finite_money(new_holdings_value, 0.0)
 
         with live_state_path.open("w", encoding="utf-8") as fh:
             json.dump({"cash": new_state.cash,
@@ -292,7 +330,8 @@ def main(refresh: bool = True) -> None:
 
         today_date = pd.Timestamp(latest["date"].max()).normalize()
         new_row = pd.DataFrame([{"date": today_date, "equity": new_equity,
-                                 "cash": cash, "n_positions": len(holdings),
+                                 "cash": new_state.cash,
+                                 "n_positions": len(new_state.holdings),
                                  "n_orders": len(today_orders)}])
         if live_history_path.exists():
             prior = pd.read_csv(live_history_path, parse_dates=["date"])
@@ -305,8 +344,11 @@ def main(refresh: bool = True) -> None:
     print(f"  backtest equity = ${pf_stats['final_equity']:,.2f} ({pf_stats['total_return']*100:+.2f}%)")
     print(f"  live $5k portfolio equity = ${new_equity:,.2f} | orders today = {len(today_orders)}")
 
+    run_at_utc = datetime.now(timezone.utc)
+    live_cash_ui = (float(post_close_state.cash) if not pre_live_start
+                    else float(pf_cfg.starting_capital))
     out_html = build_site(latest, tracker, history, fold_metrics, feat_imp, cfg,
-                          run_at=datetime.now(timezone.utc),
+                          run_at=run_at_utc,
                           hot_scored=hot_scored, hot_additions=hot_additions,
                           portfolio_history=pf_history,
                           portfolio_trades=pf_trades,
@@ -318,8 +360,36 @@ def main(refresh: bool = True) -> None:
                           daily_views_by_mode=daily_views_by_mode,
                           active_settle_mode=active_settle_mode,
                           panel=panel,
-                          starting_capital=pf_cfg.starting_capital)
+                          starting_capital=pf_cfg.starting_capital,
+                          live_cash=live_cash_ui)
     print(f"  -> {out_html}")
+
+    # Instagram-friendly share card (PNG + optional JPEG) + optional SMTP email.
+    try:
+        from pipeline.share_image import (maybe_email_share_card,
+                                           render_tomorrow_predictions_card)
+        card_png = cfg.docs_data_dir / "tomorrow_predictions_ig.png"
+        _, card_jpg = render_tomorrow_predictions_card(
+            latest, panel, cfg.long_n, card_png, run_at=run_at_utc)
+        extra = f" + {card_jpg.name}" if card_jpg else ""
+        print(f"  share card (IG square) -> {card_png}{extra}")
+        as_of = pd.Timestamp(latest["date"].max()).strftime("%Y-%m-%d")
+        attachments = [card_png]
+        if card_jpg:
+            attachments.append(card_jpg)
+        maybe_email_share_card(
+            attachments,
+            subject=f"RF daily basket — closes {as_of}",
+            body=(
+                f"Basket as of last panel date {as_of}.\n"
+                f"Generated {run_at_utc.strftime('%Y-%m-%d %H:%M UTC')}.\n\n"
+                "Attach to LINE / Instagram manually, or open from docs/data/.\n"
+                "Educational only — not investment advice."
+            ),
+        )
+    except Exception as e:
+        print(f"  share card / email skipped: {e}")
+
     print("Done.")
 
 

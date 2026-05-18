@@ -71,13 +71,16 @@ def update_tracker(predictions_today: pd.DataFrame,
     for_date = _next_business_day(today, trading_days)
 
     # Side assignment: top-long_n -> long, bottom-short_n -> short, else flat.
+    # NB: `g.index[-0:]` would be the whole frame, so guard against short_n == 0.
     g = (predictions_today.copy()
          .sort_values("y_pred", ascending=False)
          .reset_index(drop=True))
     g["rank"] = np.arange(1, len(g) + 1)
     g["side"] = "flat"
-    g.loc[g.index[:long_n], "side"] = "long"
-    g.loc[g.index[-short_n:], "side"] = "short"
+    if long_n > 0:
+        g.loc[g.index[:long_n], "side"] = "long"
+    if short_n > 0:
+        g.loc[g.index[-short_n:], "side"] = "short"
     new_rows = pd.DataFrame({
         "as_of":         today,
         "for_date":      for_date,

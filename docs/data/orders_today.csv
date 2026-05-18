@@ -1,6 +1,1 @@
-action,ticker,shares,limit_price,notional,rationale
-BUY,BIDU,7,141.05,987.35,OPEN long position (entered top-N basket)
-BUY,INTC,8,124.92,999.36,OPEN long position (entered top-N basket)
-BUY,MU,1,746.81,746.81,OPEN long position (entered top-N basket)
-BUY,POET,91,10.95,996.45,OPEN long position (entered top-N basket)
-BUY,SMCI,28,35.37,990.36,OPEN long position (entered top-N basket)
+

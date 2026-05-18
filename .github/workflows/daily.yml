@@ -2,10 +2,11 @@ name: Daily prediction
 
 on:
   schedule:
-    # Run after US market close. NYSE closes at 21:00 UTC (winter) /
-    # 20:00 UTC (summer DST). 22:30 UTC always sits ~30-90 min after close,
-    # so yfinance has the latest bar.
-    - cron: "30 22 * * 1-5"
+    # Target 4:05 PM America/New_York (weekdays), a few minutes after the cash
+    # close so yfinance has the day's bar. GitHub cron is UTC-only, so we fire
+    # at both 20:05 and 21:05 UTC and gate on NY local time (see job below).
+    - cron: "5 20 * * 1-5"
+    - cron: "5 21 * * 1-5"
   workflow_dispatch:        # Allow manual runs from the Actions tab.
   push:
     branches: [ main ]      # Re-render on any code change.
@@ -26,21 +27,44 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45   # S&P 500 + yfinance can be slow on cold cache
     steps:
+      - name: Gate — 4:05 PM America/New_York only
+        id: ny_gate
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "Run: ${{ github.event_name }} (not subject to schedule gate)."
+            exit 0
+          fi
+          h=$(TZ=America/New_York date +%H)
+          m=$(TZ=America/New_York date +%M)
+          dow=$(TZ=America/New_York date +%u)
+          if [ "$dow" -gt 5 ] || [ "$h" != "16" ] || [ "$m" != "05" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Skip: NY time is $(TZ=America/New_York date '+%H:%M %Z, %u') (want 16:05 Mon–Fri)."
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "Run: $(TZ=America/New_York date '+%Y-%m-%d %H:%M %Z')."
+          fi
+
       - name: Check out repo
+        if: steps.ny_gate.outputs.run == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Python
+        if: steps.ny_gate.outputs.run == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: "pip"
 
       - name: Install dependencies
+        if: steps.ny_gate.outputs.run == 'true'
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Run daily prediction
+        if: steps.ny_gate.outputs.run == 'true'
         env:
           # Optional: override `pipeline.config.Config.live_portfolio_start` (ISO date).
           # Leave unset to use the default in code (currently first live fills on/after that date).
@@ -50,6 +74,7 @@ jobs:
         run: python scripts/run_daily.py
 
       - name: Commit updated artifacts
+        if: steps.ny_gate.outputs.run == 'true'
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

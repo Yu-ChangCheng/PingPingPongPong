@@ -41,7 +41,9 @@ class Config:
     max_features: str = "sqrt"
 
     long_n: int = 5
-    short_n: int = 5
+    # Long-only paper portfolio: we always hold 5 names and rotate when the
+    # model drops one from the basket. No shorts.
+    short_n: int = 0
     cost_bps_per_side: float = 1.0
 
     # Live $5K simulated state: do not apply fills or mutate `live_portfolio.json`

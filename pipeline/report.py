@@ -47,79 +47,66 @@ def _fmt_num(x: float, digits: int = 2) -> str:
     return f"{x:.{digits}f}"
 
 
+def _portfolio_history_indexed(history: pd.DataFrame) -> pd.DataFrame:
+    """Portfolio sim history must use a DatetimeIndex (CSV loads keep date as a column)."""
+    if history is None or history.empty:
+        return pd.DataFrame() if history is None else history.copy()
+    h = history.copy()
+    if "date" in h.columns:
+        h = h.set_index("date")
+    h.index = pd.to_datetime(h.index)
+    return h.sort_index()
+
+
 # ---------- charts -----------------------------------------------------------
 
 def _today_predictions_table(latest: pd.DataFrame, panel: pd.DataFrame,
-                              long_n: int, short_n: int,
-                              starting_capital: float,
-                              stop_loss_pct: float = 0.08) -> str:
-    """Rich HTML table: top-N (BUY) and bottom-N (AVOID) with full execution
-    plan (entry price, shares, take-profit limit, stop-loss, default exit)."""
+                              long_n: int) -> str:
+    """Compact HTML table of today's BUY basket.
+
+    Columns: # | Ticker | Close (with grey close-date below) | Pred xret.
+    No limit-sell, stop-loss, or exit columns — the live rotation is driven
+    purely by basket membership (the calculator below handles sizing).
+    """
     last_date = pd.to_datetime(panel["date"].max())
+    last_date_str = last_date.strftime("%Y-%m-%d")
     last_prices = (panel[pd.to_datetime(panel["date"]) == last_date]
                     .set_index("ticker")["adj_close"])
     df = latest.copy()
     df["close"] = df["ticker"].map(last_prices).astype(float)
     df = df.sort_values("y_pred", ascending=False).reset_index(drop=True)
-
-    per_long = starting_capital / long_n if long_n else 0
     long_rows = df.head(long_n).copy()
-    long_rows["alloc"] = per_long
-    long_rows["shares"] = (per_long / long_rows["close"]).fillna(0)
-    long_rows["limit_sell"] = long_rows["close"] * (1 + long_rows["y_pred"])
-    long_rows["stop_loss"]  = long_rows["close"] * (1 - stop_loss_pct)
 
-    short_rows = df.tail(short_n).iloc[::-1].copy() if short_n > 0 else pd.DataFrame()
-
-    stop_pct_ui = int(round(stop_loss_pct * 100))
     head = (
         "<tr>"
-        '<th title="BUY basket vs AVOID">Side</th>'
-        "<th>#</th><th>Ticker</th>"
-        '<th title="Predicted next-day excess vs benchmark">Pred xret</th>'
-        '<th title="Last adj. close: buy-limit anchor + share sizing">Close</th>'
-        f'<th title="Shares \u2248 portfolio\u00f7{long_n}\u00f7close (~{starting_capital:,.0f} fresh)">Sh</th>'
-        '<th title="Optional take-profit (simulator does not use this)">Lim. sell</th>'
-        f'<th title="Reference stop \u2212{stop_pct_ui}% vs close; holdings use your fill">Stop</th>'
-        "<th>Exit</th></tr>"
+        "<th>#</th>"
+        "<th>Ticker</th>"
+        '<th title="Last adjusted close + the session it came from">Close</th>'
+        '<th title="Predicted next-day excess return vs benchmark">Pred xret</th>'
+        "</tr>"
     )
     rows = []
     for i, r in enumerate(long_rows.itertuples(), start=1):
-        close_str  = f"${r.close:,.2f}" if np.isfinite(r.close) else "n/a"
-        shares_str = f"{int(r.shares)}" if np.isfinite(r.shares) else "n/a"
-        ls_str = (f"<span style='color:#0b6e4f'>${r.limit_sell:,.2f}</span>"
-                  if np.isfinite(r.limit_sell) else "n/a")
-        sl_str = (f"<span style='color:#b34030'>${r.stop_loss:,.2f}</span>"
-                  if np.isfinite(r.stop_loss) else "n/a")
+        if np.isfinite(r.close):
+            close_html = (
+                f"<div>${r.close:,.2f}</div>"
+                f"<div style='color:#888;font-size:11px;margin-top:2px'>{last_date_str}</div>"
+            )
+        else:
+            close_html = "<span style='color:#888'>n/a</span>"
+        pred_pct = r.y_pred * 100
+        pred_color = "#0b6e4f" if pred_pct >= 0 else "#b34030"
         rows.append(
-            f"<tr class='winner'>"
-            f"<td><span class='tag tag-buy'>BUY</span></td>"
+            f"<tr class='winner' data-ticker='{r.ticker}' "
+            f"data-close='{r.close if np.isfinite(r.close) else 0}'>"
             f"<td>#{i}</td>"
             f"<td><b>{r.ticker}</b></td>"
-            f"<td>{r.y_pred*100:+.2f}%</td>"
-            f"<td>{close_str}</td>"
-            f"<td>{shares_str}</td>"
-            f"<td>{ls_str}</td>"
-            f"<td>{sl_str}</td>"
-            f"<td style='color:#666'>next session close</td>"
+            f"<td>{close_html}</td>"
+            f"<td style='color:{pred_color};font-weight:600'>{pred_pct:+.2f}%</td>"
             f"</tr>"
         )
-    for i, r in enumerate(short_rows.itertuples(), start=1):
-        close_str = f"${r.close:,.2f}" if np.isfinite(r.close) else "n/a"
-        rows.append(
-            f"<tr class='loser'>"
-            f"<td><span class='tag tag-sell'>AVOID</span></td>"
-            f"<td>#{i}</td>"
-            f"<td><b>{r.ticker}</b></td>"
-            f"<td>{r.y_pred*100:+.2f}%</td>"
-            f"<td>{close_str}</td>"
-            f"<td>\u2014</td>"
-            f"<td>\u2014</td>"
-            f"<td>\u2014</td>"
-            f"<td style='color:#666'>do not buy</td>"
-            f"</tr>"
-        )
-    return f"<table><thead>{head}</thead><tbody>{''.join(rows)}</tbody></table>"
+    return (f"<table id='preds-table'><thead>{head}</thead>"
+            f"<tbody>{''.join(rows)}</tbody></table>")
 
 
 def _build_today_chart(latest: pd.DataFrame, long_n: int, short_n: int) -> go.Figure:
@@ -150,6 +137,7 @@ def _build_today_chart(latest: pd.DataFrame, long_n: int, short_n: int) -> go.Fi
 
 
 def _build_equity_chart(history: pd.DataFrame, starting_capital: float) -> go.Figure:
+    history = _portfolio_history_indexed(history)
     if history.empty:
         return _empty_chart("No portfolio history yet.")
     eq = history["equity"]
@@ -213,11 +201,11 @@ def _build_animated_backtest(history: pd.DataFrame,
     moving "current" dot) and a vertical date cursor. This keeps the HTML
     payload small (a few MB) regardless of trade count.
     """
+    history = _portfolio_history_indexed(history)
     if history.empty:
         return _empty_chart("No backtest history to animate.")
 
     eq = history["equity"].copy()
-    eq.index = pd.to_datetime(eq.index)
 
     if not trades.empty:
         t = trades.copy()
@@ -385,10 +373,10 @@ def _build_backtest_equity(history: pd.DataFrame,
                             starting_capital: float) -> go.Figure:
     """Plain equity curve for the Backtesting tab. The JS layer adds a vertical
     cursor + a marker dot via Plotly.relayout when the user picks a date."""
+    history = _portfolio_history_indexed(history)
     if history.empty:
         return _empty_chart("No backtest history yet.")
-    eq = history["equity"].copy()
-    eq.index = pd.to_datetime(eq.index)
+    eq = history["equity"]
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=eq.index, y=eq.values, mode="lines", name="Equity",
@@ -417,6 +405,7 @@ def _build_backtest_equity(history: pd.DataFrame,
 
 
 def _build_pnl_bars(history: pd.DataFrame) -> go.Figure:
+    history = _portfolio_history_indexed(history)
     if history.empty:
         return _empty_chart("No daily PnL yet.")
     pnl = history["pnl"].fillna(0)
@@ -552,71 +541,141 @@ def _orders_table(orders: list) -> str:
     if not orders:
         return ('<p style="color:#666;font-style:italic;margin:4px 0">'
                 'No orders today \u2014 portfolio already aligned with target basket.</p>')
-    head = ("<tr><th>Action</th><th>Ticker</th><th>Shares</th>"
-            "<th>Limit price</th><th>Notional</th><th>Why</th></tr>")
+    head = (
+        "<tr><th>Action</th><th>Ticker</th>"
+        '<th title="Shares from the $5K paper sim (floor sizing)">Model sh</th>'
+        "<th>Limit</th><th>Notional</th>"
+        '<th title="From your equity + % below (BUY only)">Your sh</th>'
+        '<th title="Your sh \u00d7 limit (BUY only)">Your $</th>'
+        "<th>Why</th></tr>"
+    )
     rows = []
     for o in orders:
         d = o.to_dict() if hasattr(o, "to_dict") else o
         cls = "buy" if d["action"] == "BUY" else "sell"
+        act = d["action"]
+        tkr = d["ticker"]
+        px = float(d["limit_price"])
+        msh = int(d["shares"])
+        if act == "BUY":
+            your_cols = (
+                "<td><input type=\"number\" class=\"ord-your-sh-inp\" min=\"0\" step=\"1\" "
+                f"aria-label=\"your shares {tkr}\" style=\"width:76px\" /></td>"
+                "<td class=\"ord-your-money\">\u2014</td>"
+            )
+        else:
+            your_cols = "<td>\u2014</td><td class=\"ord-your-money\">\u2014</td>"
         rows.append(
-            f"<tr class='{cls}'>"
-            f"<td><b>{d['action']}</b></td>"
-            f"<td>{d['ticker']}</td>"
-            f"<td>{d['shares']}</td>"
+            f"<tr class='{cls} order-row' data-action='{act}' data-ticker='{tkr}' "
+            f"data-price='{px}' data-model-shares='{msh}'>"
+            f"<td><b>{act}</b></td>"
+            f"<td>{tkr}</td>"
+            f"<td>{msh}</td>"
             f"<td>${d['limit_price']:,.2f}</td>"
             f"<td>${d['notional']:,.2f}</td>"
+            f"{your_cols}"
             f"<td>{d['rationale']}</td>"
             f"</tr>"
         )
-    return f"<table class='orders'><thead>{head}</thead><tbody>{''.join(rows)}</tbody></table>"
+    return (
+        f"<table id='orders-table' class='orders'><thead>{head}</thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
 
 
-def _holdings_table(holdings_df: pd.DataFrame) -> str:
+def _holdings_table(holdings_df: pd.DataFrame,
+                    live_cash: float | None = None) -> str:
+    """Live $5K current holdings.
+
+    Cash, shares, and avg-price cells are editable in the browser; totals
+    recompute live. Overrides persist per browser (localStorage) and do not
+    change ``live_portfolio.json``.
+    """
     if holdings_df.empty:
-        return ('<p style="color:#666;font-style:italic;margin:4px 0">'
-                'No open positions yet \u2014 first set of orders below will '
-                'create them.</p>')
-    head = ("<tr><th>Ticker</th><th>Shares</th><th>Entry</th>"
+        return ('<p id="holdings-empty" style="color:#666;font-style:italic;margin:4px 0">'
+                'No open positions yet \u2014 first set of orders below will create them.</p>')
+    cash_val = float(live_cash) if live_cash is not None and np.isfinite(live_cash) else 0.0
+    total_mv = float(holdings_df["market_value"].sum()) if "market_value" in holdings_df else 0.0
+    if not np.isfinite(total_mv):
+        total_mv = 0.0
+    init_equity = cash_val + total_mv
+    head = ("<tr><th>Ticker</th>"
+            '<th title="Click to edit. Override stays in this browser.">Shares</th>'
+            '<th title="Click to edit. Override stays in this browser.">Avg price</th>'
             "<th>Last close</th><th>Market value</th>"
-            "<th>Unrealized PnL</th><th>Stop-loss</th>"
-            "<th>Days held</th><th>Decision</th></tr>")
+            "<th>Unrealized PnL</th></tr>")
     rows = []
     for _, r in holdings_df.iterrows():
         upnl = r["unrealized_pnl"]
+        ep = r["entry_price"]
+        cp = r["current_price"]
+        sh = int(r["shares"]) if np.isfinite(r["shares"]) else 0
         cls = "winner" if (np.isfinite(upnl) and upnl >= 0) else "loser"
+        ep_input = (
+            f'<input type="number" step="0.01" min="0" '
+            f'class="hold-entry" data-ticker="{r["ticker"]}" '
+            f'value="{ep:.2f}" defaultValue="{ep:.2f}" '
+            f'aria-label="avg price for {r["ticker"]}" />'
+            if np.isfinite(ep) else
+            f'<input type="number" step="0.01" min="0" '
+            f'class="hold-entry" data-ticker="{r["ticker"]}" '
+            f'value="" defaultValue="" placeholder="enter avg" />'
+        )
+        cp_str = f"${cp:,.2f}" if np.isfinite(cp) else "n/a"
+        mv = r["market_value"]
+        mv_str = f"${mv:,.2f}" if np.isfinite(mv) else "n/a"
         if np.isfinite(upnl):
             color = "#0b6e4f" if upnl >= 0 else "#b34030"
             sign  = "+" if upnl >= 0 else "-"
             upct  = r["unrealized_pct"]
             psign = "+" if upct >= 0 else "-"
             upnl_str = (
-                f"<span style='color:{color};font-weight:600'>"
+                f"<span class='upnl-cell' style='color:{color};font-weight:600'>"
                 f"{sign}${abs(upnl):,.2f} "
                 f"({psign}{abs(upct)*100:.2f}%)"
                 f"</span>"
             )
         else:
-            upnl_str = "n/a"
-        decision = r.get("decision", "HOLD")
-        decision_html = (f"<span style='color:#b34030;font-weight:600'>{decision}</span>"
-                          if "SELL" in decision else
-                          f"<span style='color:#0b6e4f'>{decision}</span>")
-        days_held = int(r.get("days_held", 0)) if np.isfinite(r.get("days_held", 0)) else 0
-        time_left = int(r.get("time_stop_left", 0)) if np.isfinite(r.get("time_stop_left", 0)) else 0
+            upnl_str = "<span class='upnl-cell' style='color:#888'>n/a</span>"
+        sh_input = (
+            f'<input type="number" step="1" min="0" '
+            f'class="hold-shares" data-ticker="{r["ticker"]}" '
+            f'value="{sh}" defaultValue="{sh}" '
+            f'aria-label="shares for {r["ticker"]}" />'
+        )
         rows.append(
-            f"<tr class='{cls}'>"
+            f"<tr class='{cls}' data-ticker='{r['ticker']}' "
+            f"data-shares-default='{sh}' "
+            f"data-current='{cp if np.isfinite(cp) else 0}'>"
             f"<td><b>{r['ticker']}</b></td>"
-            f"<td>{int(r['shares'])}</td>"
-            f"<td>${r['entry_price']:,.2f}</td>"
-            f"<td>${r['current_price']:,.2f}</td>"
-            f"<td>${r['market_value']:,.2f}</td>"
+            f"<td>{sh_input}</td>"
+            f"<td>{ep_input}</td>"
+            f"<td>{cp_str}</td>"
+            f"<td class='mv-cell'>{mv_str}</td>"
             f"<td>{upnl_str}</td>"
-            f"<td>${r['stop_loss_price']:,.2f}</td>"
-            f"<td>{days_held} (stop in {time_left})</td>"
-            f"<td>{decision_html}</td>"
             f"</tr>"
         )
-    return f"<table class='holdings'><thead>{head}</thead><tbody>{''.join(rows)}</tbody></table>"
+    return (
+        f"<div class='holdings-toolbar calc-form' style='margin-bottom:12px'>"
+        f"<label class='calc-field'>"
+        f"<span>Cash ($)</span>"
+        f"<input type='number' id='hold-cash' step='0.01' "
+        f"value='{cash_val:.2f}' defaultValue='{cash_val:.2f}' "
+        f"aria-label='cash balance' />"
+        f"</label>"
+        f"<div class='calc-summary' id='holdings-summary'>"
+        f"Holdings MV <b>{_fmt_money(total_mv)}</b> &middot; "
+        f"Equity (cash + MV) <b>{_fmt_money(init_equity)}</b>"
+        f"</div>"
+        f"</div>"
+        f"<table class='holdings' id='holdings-table'><thead>{head}</thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+        f"<button id='holdings-reset' type='button' "
+        f"style='margin-top:10px;font-size:12px;padding:5px 10px;"
+        f"border:1px solid #ccc;background:#fff;border-radius:5px;"
+        f"cursor:pointer;font-family:inherit;color:#666'>"
+        f"Reset holdings overrides</button>"
+    )
 
 
 def _recent_predictions_table(history: pd.DataFrame, n: int = 20) -> str:
@@ -750,6 +809,50 @@ table.holdings tr.loser,  tr.loser  { background: var(--loser); }
 .bt-mode-toggle .mode-btn.active { background: var(--accent);
                                      color: #fff; border-color: var(--accent); }
 .bt-mode-toggle .mode-btn:hover:not(.active) { background: #f0f0eb; }
+
+/* Editable avg-price input inside the Current holdings table. */
+.hold-entry, .hold-shares { width: 90px; font-size: 13px; padding: 4px 6px;
+              border: 1px solid #ccc; border-radius: 5px;
+              font-family: inherit; background: #fafaf6; }
+.hold-entry:focus, .hold-shares:focus { outline: none; border-color: var(--accent);
+                    background: #fff;
+                    box-shadow: 0 0 0 2px rgba(11,110,79,0.15); }
+.holdings-toolbar { align-items: flex-end; }
+
+/* Position-size calculator. */
+.calc-form { display: flex; gap: 18px; align-items: flex-end; flex-wrap: wrap; }
+.calc-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px;
+              color: var(--muted); }
+.calc-field input { font-size: 16px; padding: 7px 10px; width: 160px;
+                    border: 1px solid #ccc; border-radius: 6px;
+                    font-family: inherit; background: #fff; }
+.calc-field input:focus { outline: none; border-color: var(--accent);
+                          box-shadow: 0 0 0 2px rgba(11,110,79,0.15); }
+.calc-summary { font-size: 13px; color: #333; line-height: 1.5; flex: 1;
+                min-width: 240px; padding: 8px 12px; background: #fafaf6;
+                border-radius: 6px; border-left: 3px solid var(--accent); }
+.calc-summary b { color: var(--fg); }
+.calc-checkbox-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+                      font-size: 13px; color: var(--muted); margin-top: 8px; }
+.calc-checkbox-row input[type="checkbox"] { width: auto; margin: 0; }
+.calc-checkbox-row label { display: inline-flex; align-items: center; gap: 6px;
+                           cursor: pointer; }
+.calc-tol-inline { width: 64px !important; }
+table.orders input.ord-your-sh-inp {
+  width: 76px; font-size: 13px; padding: 4px 6px;
+  border: 1px solid #ccc; border-radius: 5px; font-family: inherit;
+  background: #fafaf6;
+}
+table.orders input.ord-your-sh-inp:focus {
+  outline: none; border-color: var(--accent);
+  background: #fff; box-shadow: 0 0 0 2px rgba(11,110,79,0.12);
+}
+#orders-calc-sync {
+  margin-top: 8px; font-size: 12px; padding: 6px 12px;
+  border: 1px solid #ccc; background: #fff; border-radius: 6px;
+  cursor: pointer; font-family: inherit; color: #444;
+}
+#orders-calc-sync:hover { background: #f0f0eb; }
 """
 
 
@@ -772,7 +875,8 @@ def build_site(latest_predictions: pd.DataFrame,
                daily_views_by_mode: dict | None = None,
                active_settle_mode: str = "margin",
                panel: pd.DataFrame | None = None,
-               starting_capital: float = 5000.0) -> Path:
+               starting_capital: float = 5000.0,
+               live_cash: float | None = None) -> Path:
     """Render docs/index.html."""
     cfg.docs_dir.mkdir(parents=True, exist_ok=True)
     cfg.docs_data_dir.mkdir(parents=True, exist_ok=True)
@@ -784,7 +888,8 @@ def build_site(latest_predictions: pd.DataFrame,
 
     # ---- KPI strip ----
     portfolio_stats = portfolio_stats or {}
-    pf_history = portfolio_history if portfolio_history is not None else pd.DataFrame()
+    pf_history = _portfolio_history_indexed(
+        portfolio_history if portfolio_history is not None else pd.DataFrame())
     live = live_history if live_history is not None else pd.DataFrame()
     final_eq = portfolio_stats.get("final_equity", starting_capital)
     total_ret = portfolio_stats.get("total_return", 0.0)
@@ -800,23 +905,50 @@ def build_site(latest_predictions: pd.DataFrame,
     avg_win = portfolio_stats.get("avg_win", 0.0)
     avg_loss = portfolio_stats.get("avg_loss", 0.0)
 
-    # Live $5K KPIs
-    if not live.empty:
-        live_equity = float(live["equity"].iloc[-1])
-        live_days = int(len(live))
-        live_total_ret = live_equity / starting_capital - 1
-        if live_days >= 2:
-            live_daily = live["equity"].pct_change().dropna()
-            live_sharpe = (live_daily.mean() * 252) / (live_daily.std() * np.sqrt(252) + 1e-12)
-            live_win = float((live_daily > 0).mean())
-            live_today_pnl = float(live["equity"].iloc[-1] - live["equity"].iloc[-2])
-            live_today_ret = float(live_daily.iloc[-1])
-        else:
-            live_sharpe = 0.0; live_win = 0.0
-            live_today_pnl = live_equity - starting_capital; live_today_ret = live_total_ret
-    else:
-        live_equity = starting_capital; live_days = 0; live_total_ret = 0.0
-        live_sharpe = 0.0; live_win = 0.0; live_today_pnl = 0.0; live_today_ret = 0.0
+    # Live $5K KPIs (defensive: empty / NaN data must not crash the render).
+    live_equity = float(starting_capital)
+    live_days = 0
+    live_total_ret = 0.0
+    live_sharpe = 0.0
+    live_win = 0.0
+    live_today_pnl = 0.0
+    live_today_ret = 0.0
+    try:
+        if live is not None and not live.empty and "equity" in live.columns:
+            eq_series = pd.to_numeric(live["equity"], errors="coerce").dropna()
+            if not eq_series.empty:
+                live_equity = float(eq_series.iloc[-1])
+                live_days = int(len(eq_series))
+                live_total_ret = (live_equity / starting_capital - 1
+                                  if starting_capital else 0.0)
+                if live_days >= 2:
+                    live_daily = eq_series.pct_change().dropna()
+                    if not live_daily.empty and live_daily.std() > 0:
+                        live_sharpe = float((live_daily.mean() * 252)
+                                            / (live_daily.std() * np.sqrt(252) + 1e-12))
+                    live_win = float((live_daily > 0).mean()) if not live_daily.empty else 0.0
+                    live_today_pnl = float(eq_series.iloc[-1] - eq_series.iloc[-2])
+                    live_today_ret = (float(live_daily.iloc[-1])
+                                      if not live_daily.empty else 0.0)
+                else:
+                    live_today_pnl = live_equity - starting_capital
+                    live_today_ret = live_total_ret
+    except Exception:
+        # Keep zeroed-out defaults so the dashboard still renders.
+        pass
+
+    if not np.isfinite(live_equity):
+        live_equity = float(starting_capital)
+    if not np.isfinite(live_total_ret):
+        live_total_ret = 0.0
+    if not np.isfinite(live_today_pnl):
+        live_today_pnl = 0.0
+    if not np.isfinite(live_today_ret):
+        live_today_ret = 0.0
+    if not np.isfinite(live_sharpe):
+        live_sharpe = 0.0
+    if not np.isfinite(live_win):
+        live_win = 0.0
 
     # Hit rate (from forward tracker)
     h = history.dropna(subset=["actual_xret"]) if not history.empty else pd.DataFrame()
@@ -895,7 +1027,6 @@ def build_site(latest_predictions: pd.DataFrame,
         if last_view_d else "Top tickers by realized P&amp;L"
     )
     ticker_pnl_fig = _top_realized_bar_figure(init_top_rows, init_top_title)
-    live_fig  = _build_live_equity_chart(live, starting_capital)
     hot_fig   = _build_hot_chart(hot_scored if hot_scored is not None else pd.DataFrame())
     fold_fig  = _build_importance_chart(feat_imp)
     bt_eq_fig = _build_backtest_equity(pf_history, starting_capital)
@@ -903,8 +1034,7 @@ def build_site(latest_predictions: pd.DataFrame,
                       if portfolio_stats else 0.08)
     if panel is not None and not panel.empty:
         preds_table_html = _today_predictions_table(
-            latest_predictions, panel, long_n, short_n, starting_capital,
-            stop_loss_pct=stop_loss_pct)
+            latest_predictions, panel, long_n)
     else:
         preds_table_html = "<p><i>Universe panel unavailable.</i></p>"
 
@@ -912,7 +1042,12 @@ def build_site(latest_predictions: pd.DataFrame,
                       else "<i>no new hot adds today</i>")
 
     orders_html = _orders_table(orders or [])
-    holdings_html = _holdings_table(holdings_df if holdings_df is not None else pd.DataFrame())
+    calc_cash_default = (
+        float(live_cash) if live_cash is not None and np.isfinite(live_cash)
+        else float(starting_capital))
+    holdings_html = _holdings_table(
+        holdings_df if holdings_df is not None else pd.DataFrame(),
+        live_cash=calc_cash_default)
     recent_html = _recent_predictions_table(history, n=20)
 
     long_n_str = f"{long_n}"
@@ -954,36 +1089,54 @@ def build_site(latest_predictions: pd.DataFrame,
   </div>
 
   <div class="card">
-    <h2>Today's orders \u2014 place at next open</h2>
-    <p class="lead">
-      Rotate into today&apos;s basket at the <strong>next</strong> session open.
-      <strong>Limit price</strong> = same adj.-close anchor as the table below (~<strong>${starting_capital / max(cfg.long_n, 1):,.0f}</strong> per fresh BUY slot, equal-weight).
+    <h2>Today's orders \u2014 place during after-hours, before next open</h2>
+    <p class="hint" style="margin:0 0 12px 0">
+      <strong>Model</strong> columns replay the in-repo $5K sim (strict floor).
+      <strong>Your sh</strong> refills when you change equity or % (BUY rows only).
+      You can type your own share count in the box; then equity changes won&apos;t
+      overwrite that row until you click <strong>Reset my share edits</strong>.
+      The dollar column is <strong>Your sh \u00d7 limit</strong>.
+      If a BUY would be 0 shares because the stock is slightly above your slot,
+      use the checkbox below to allow <strong>1 share</strong> when within tolerance.
     </p>
-    <p class="hint">Playbook lists chase cushion and fallbacks; bump <code>cost_bps</code> if you model commissions.</p>
+    <div id="orders-calc-form" class="calc-form">
+      <label class="calc-field">
+        <span>Your equity ($)</span>
+        <input id="calc-cash" type="number" min="0" step="1"
+               value="{calc_cash_default:.0f}" />
+      </label>
+      <label class="calc-field">
+        <span>Per-ticker % of equity</span>
+        <input id="calc-pct" type="number" min="0.1" max="100" step="0.5" value="20" />
+      </label>
+      <div class="calc-summary" id="calc-summary"></div>
+    </div>
+    <div class="calc-checkbox-row">
+      <label>
+        <input type="checkbox" id="calc-min1" checked />
+        <span>If <strong>floor</strong> shares = 0 on a BUY, allow <strong>1</strong> share when limit \u2264 slot \u00d7 (1 +</span>
+      </label>
+      <input id="calc-tol-pct" class="calc-tol-inline" type="number" min="0" max="100" step="0.5" value="5" aria-label="tolerance percent" />
+      <span>%)</span>
+    </div>
+    <p style="margin:6px 0 0 0">
+      <button type="button" id="orders-calc-sync"
+        title="Clear manual share edits and refill from equity / % / tolerance">
+        Reset my share edits (use calculator again)
+      </button>
+    </p>
     {orders_html}
   </div>
 
   <div class="card">
-    <h2>Execution playbook \u2014 quick rules</h2>
-    <ol class="hint" style="margin:0 0 0 18px;padding:0;line-height:1.6">
-      <li><strong>BUYs:</strong> open market, or day-limit at anchor up to ~+0.5% chase.</li>
-      <li><strong>Still open ~11 AM ET?</strong> Market to finish, <em>or</em> skip and rotate tomorrow.
-        Skip if gap &gt; +1.5% above anchor.</li>
-      <li><strong>SELLs:</strong> exit rotated names same day (MOC or limit ~−0.25%).</li>
-      <li><strong>Stop</strong> (holdings/decision column): −8% from <em>your</em> fill \u2192 sell next open.</li>
-      <li><strong>Time-stop:</strong> same ticker &gt; 10 sessions \u2192 flatten; rebuy next pass if still top.</li>
-      <li><strong>Otherwise</strong> overnight holds only; rotate with the basket, not intraday guesses.</li>
-    </ol>
-  </div>
-
-  <div class="card">
-    <h2>Current holdings \u2014 with explicit decision rules</h2>
+    <h2>Current holdings</h2>
+    <p class="hint" style="margin:0 0 10px 0">
+      Exactly <strong>{cfg.long_n}</strong> longs — rotated at each session&apos;s
+      <strong>close</strong>. Edit <strong>Cash</strong>, <strong>Shares</strong>,
+      and <strong>Avg price</strong> below to match your real book; MV, equity,
+      and PnL update live (saved in this browser only — not in live_portfolio.json).
+    </p>
     {holdings_html}
-  </div>
-
-  <div class="card">
-    <h2>Live equity curve \u2014 honest forward record</h2>
-    {_fig_div(live_fig, "live_chart")}
   </div>
 
   <div class="card">
@@ -997,20 +1150,12 @@ def build_site(latest_predictions: pd.DataFrame,
   <div class="card">
     <h2>Tomorrow's predictions \u2014 basket &amp; prices</h2>
     <p class="lead">
-      Ranked RF on {len(cfg.universe)} names (daily cross-section features \u2192 short-horizon excess vs EW peers; walk-forward before production).
-      As of <b>{today.strftime('%Y-%m-%d')}</b>: top-<b>{long_n_str}</b> BUY (live is long-only), bottom-<b>{short_n}</b> AVOID,
-      equal-weight on <b>{capital_str}</b> using closes below.
+      Ranked RF on {len(cfg.universe)} names (daily cross-section features
+      \u2192 short-horizon excess vs EW peers, walk-forward).
+      Run date <b>{today.strftime('%Y-%m-%d')}</b> \u2014 top-<b>{long_n_str}</b>
+      BUY basket below; the grey date under each price is the session that
+      close came from.
     </p>
-    <div class="callout">
-      <strong>Columns</strong>
-      <ul>
-        <li><strong>Close</strong> — adj. last session from this run (not streaming); sizing + limit-buy anchor.</li>
-        <li><strong>Lim. sell</strong> — optional <span style="white-space:nowrap">close \u00d7 (1 + pred)</span>; simulator ignores it.</li>
-        <li><strong>Stop</strong> — reference −{int(round(stop_loss_pct * 100))}% vs anchor; <strong>Current holdings</strong> uses your fill.</li>
-        <li><strong>Exit</strong> — ~one session; rotate at next close if neither limit nor stop hits.</li>
-        <li><strong>Today&apos;s orders</strong> — same anchor in Limit price.</li>
-      </ul>
-    </div>
     {preds_table_html}
     <div style="margin-top:14px">{_fig_div(today_fig, "today_chart")}</div>
   </div>
@@ -1708,6 +1853,266 @@ _BACKTEST_JS = r"""
   }
 
   selectDate(cur);
+})();
+</script>
+
+<script>
+/* Editable holdings: cash, shares, avg price — live MV / equity / PnL.
+   Persists per browser (localStorage); does not change live_portfolio.json. */
+(function() {
+  const tbl = document.getElementById('holdings-table');
+  if (!tbl) return;
+  const KEY = 'pppp_holdings_overrides_v2';
+  const KEY_V1 = 'pppp_holdings_overrides_v1';
+  const holdCash = document.getElementById('hold-cash');
+  const summary = document.getElementById('holdings-summary');
+  const calcCash = document.getElementById('calc-cash');
+
+  function loadState() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(KEY) || 'null');
+      if (raw && (raw.entries || raw.shares || raw.cash != null)) {
+        return {entries: raw.entries || {}, shares: raw.shares || {}, cash: raw.cash};
+      }
+      const v1 = JSON.parse(localStorage.getItem(KEY_V1) || '{}') || {};
+      return {entries: v1, shares: {}, cash: null};
+    } catch (e) { return {entries: {}, shares: {}, cash: null}; }
+  }
+  function saveState(st) {
+    try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) {}
+  }
+  function fmtMoney(x) {
+    if (x === null || x === undefined || !isFinite(x)) return 'n/a';
+    const s = x < 0 ? '-' : '';
+    return s + '$' + Math.abs(x).toLocaleString(undefined,
+      {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  }
+  const state = loadState();
+
+  function rowShares(row) {
+    const shInp = row.querySelector('.hold-shares');
+    const v = shInp ? parseFloat(shInp.value) : NaN;
+    return isFinite(v) && v >= 0 ? v : 0;
+  }
+
+  function recompute(row) {
+    const sh = rowShares(row);
+    const cp = parseFloat(row.dataset.current) || 0;
+    const inp = row.querySelector('.hold-entry');
+    const ep = inp ? parseFloat(inp.value) : NaN;
+    const mvCell = row.querySelector('.mv-cell');
+    const upnlCell = row.querySelector('.upnl-cell');
+    const mv = (sh > 0 && cp > 0) ? sh * cp : NaN;
+    if (mvCell) mvCell.textContent = isFinite(mv) ? fmtMoney(mv) : 'n/a';
+    if (!isFinite(ep) || ep <= 0 || !isFinite(cp) || cp <= 0 || sh <= 0) {
+      if (upnlCell) {
+        upnlCell.textContent = 'n/a';
+        upnlCell.style.color = '#888';
+        upnlCell.style.fontWeight = '';
+      }
+      row.classList.remove('winner', 'loser');
+      return isFinite(mv) ? mv : 0;
+    }
+    const upnl = (cp - ep) * sh;
+    const upct = cp / ep - 1;
+    const color = upnl >= 0 ? '#0b6e4f' : '#b34030';
+    const sign = upnl >= 0 ? '+' : '-';
+    const psign = upct >= 0 ? '+' : '-';
+    if (upnlCell) {
+      upnlCell.innerHTML = sign + '$' + Math.abs(upnl).toLocaleString(undefined,
+        {minimumFractionDigits: 2, maximumFractionDigits: 2})
+        + ' (' + psign + (Math.abs(upct) * 100).toFixed(2) + '%)';
+      upnlCell.style.color = color;
+      upnlCell.style.fontWeight = '600';
+    }
+    row.classList.toggle('winner', upnl >= 0);
+    row.classList.toggle('loser', upnl < 0);
+    return isFinite(mv) ? mv : 0;
+  }
+
+  function recomputeAll() {
+    let totalMv = 0;
+    tbl.querySelectorAll('tbody tr').forEach(row => {
+      totalMv += recompute(row);
+    });
+    let cash = holdCash ? parseFloat(holdCash.value) : 0;
+    if (!isFinite(cash)) cash = 0;
+    const equity = cash + totalMv;
+    if (summary) {
+      summary.innerHTML =
+        'Holdings MV <b>' + fmtMoney(totalMv) + '</b> &middot; '
+        + 'Equity (cash + MV) <b>' + fmtMoney(equity) + '</b>';
+    }
+    return {cash, totalMv, equity};
+  }
+
+  if (holdCash) {
+    if (state.cash != null && isFinite(state.cash)) holdCash.value = state.cash;
+    holdCash.addEventListener('input', () => {
+      const v = parseFloat(holdCash.value);
+      if (isFinite(v)) state.cash = v;
+      else delete state.cash;
+      saveState(state);
+      recomputeAll();
+      if (calcCash && isFinite(v)) calcCash.value = Math.round(v);
+    });
+  }
+
+  tbl.querySelectorAll('tbody tr').forEach(row => {
+    const tk = row.dataset.ticker;
+    const epInp = row.querySelector('.hold-entry');
+    const shInp = row.querySelector('.hold-shares');
+    if (epInp && state.entries[tk] != null) epInp.value = state.entries[tk];
+    if (shInp && state.shares[tk] != null) shInp.value = state.shares[tk];
+    recompute(row);
+    if (epInp) {
+      epInp.addEventListener('input', () => {
+        const v = parseFloat(epInp.value);
+        if (isFinite(v) && v > 0) state.entries[tk] = v;
+        else delete state.entries[tk];
+        saveState(state);
+        recomputeAll();
+      });
+    }
+    if (shInp) {
+      shInp.addEventListener('input', () => {
+        const v = parseFloat(shInp.value);
+        if (isFinite(v) && v >= 0) state.shares[tk] = Math.floor(v);
+        else delete state.shares[tk];
+        saveState(state);
+        recomputeAll();
+      });
+    }
+  });
+  recomputeAll();
+  if (calcCash && holdCash && isFinite(parseFloat(holdCash.value))) {
+    calcCash.value = Math.round(parseFloat(holdCash.value));
+  }
+
+  const reset = document.getElementById('holdings-reset');
+  if (reset) {
+    reset.addEventListener('click', () => {
+      saveState({entries: {}, shares: {}, cash: null});
+      state.entries = {};
+      state.shares = {};
+      delete state.cash;
+      if (holdCash) holdCash.value = holdCash.defaultValue;
+      tbl.querySelectorAll('tbody tr').forEach(row => {
+        const epInp = row.querySelector('.hold-entry');
+        const shInp = row.querySelector('.hold-shares');
+        if (epInp) epInp.value = epInp.defaultValue;
+        if (shInp) shInp.value = shInp.defaultValue;
+      });
+      recomputeAll();
+      if (calcCash && holdCash) calcCash.value = Math.round(parseFloat(holdCash.value) || 5000);
+    });
+  }
+})();
+</script>
+
+<script>
+/* Your-shares calculator on Today's orders (BUY rows). Editable share inputs;
+   $ column used class ord-your-money (never use $ in a CSS class name). */
+(function() {
+  const ordersTbl = document.getElementById('orders-table');
+  const cashIn = document.getElementById('calc-cash');
+  const pctIn  = document.getElementById('calc-pct');
+  const min1Cb = document.getElementById('calc-min1');
+  const tolIn  = document.getElementById('calc-tol-pct');
+  const summary = document.getElementById('calc-summary');
+  const syncBtn = document.getElementById('orders-calc-sync');
+  if (!ordersTbl || !cashIn || !pctIn) return;
+
+  function fmtMoney(x) {
+    if (x === null || x === undefined || !isFinite(x)) return 'n/a';
+    const s = x < 0 ? '-' : '';
+    return s + '$' + Math.abs(x).toLocaleString(undefined,
+      {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  }
+  function fmtMoney0(x) {
+    if (x === null || x === undefined || !isFinite(x)) return 'n/a';
+    const s = x < 0 ? '-' : '';
+    return s + '$' + Math.abs(x).toLocaleString(undefined,
+      {minimumFractionDigits: 0, maximumFractionDigits: 0});
+  }
+
+  function calcShares(slot, price, allowMin1, tol) {
+    let sh = (price > 0 && slot > 0) ? Math.floor(slot / price) : 0;
+    if (sh === 0 && allowMin1 && price > 0 && slot > 0 && price <= slot * (1 + tol)) {
+      sh = 1;
+    }
+    return sh;
+  }
+
+  function render() {
+    const cash = Math.max(parseFloat(cashIn.value) || 0, 0);
+    const pct  = Math.max(parseFloat(pctIn.value) || 0, 0);
+    const slot = cash * (pct / 100);
+    const tol  = Math.max(parseFloat(tolIn && tolIn.value) || 0, 0) / 100;
+    const allowMin1 = min1Cb && min1Cb.checked;
+
+    let buyUsed = 0, buyShares = 0, buyCount = 0;
+    ordersTbl.querySelectorAll('tr.order-row').forEach(row => {
+      const money = row.querySelector('.ord-your-money');
+      const inp = row.querySelector('.ord-your-sh-inp');
+      if (row.dataset.action !== 'BUY') {
+        if (money) money.textContent = '\u2014';
+        return;
+      }
+      if (!inp || !money) return;
+      const price = parseFloat(row.dataset.price) || 0;
+      let sh;
+      if (inp.dataset.manual === '1') {
+        sh = Math.max(0, parseInt(inp.value, 10) || 0);
+      } else {
+        sh = calcShares(slot, price, allowMin1, tol);
+        inp.value = String(sh);
+      }
+      const used = sh * price;
+      buyUsed += used;
+      buyShares += sh;
+      if (sh > 0) buyCount += 1;
+      inp.title = (inp.dataset.manual === '1')
+        ? 'Manual share count (click reset below to follow calculator)'
+        : 'floor(slot/limit); optional 1-share bump when within tolerance';
+      money.textContent = price > 0 ? fmtMoney(used) : fmtMoney(0);
+    });
+
+    if (summary) {
+      summary.innerHTML =
+        '<b>Slot $</b> (per BUY name): ' + fmtMoney0(slot)
+        + ' &middot; <b>BUY rows funded:</b> ' + buyCount
+        + ' &middot; <b>Your $ on BUYs:</b> ' + fmtMoney(buyUsed)
+        + ' &middot; <b>Shares (BUYs):</b> ' + buyShares;
+    }
+  }
+
+  ordersTbl.addEventListener('input', (e) => {
+    const t = e.target;
+    if (!t || !t.classList || !t.classList.contains('ord-your-sh-inp')) return;
+    t.dataset.manual = '1';
+    render();
+  });
+
+  if (syncBtn) {
+    syncBtn.addEventListener('click', () => {
+      ordersTbl.querySelectorAll('.ord-your-sh-inp').forEach(el => {
+        delete el.dataset.manual;
+      });
+      render();
+    });
+  }
+
+  cashIn.addEventListener('input', render);
+  cashIn.addEventListener('change', render);
+  pctIn.addEventListener('input', render);
+  pctIn.addEventListener('change', render);
+  if (min1Cb) min1Cb.addEventListener('change', render);
+  if (tolIn) {
+    tolIn.addEventListener('input', render);
+    tolIn.addEventListener('change', render);
+  }
+  render();
 })();
 </script>
 """
