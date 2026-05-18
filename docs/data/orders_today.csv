@@ -1,1 +1,9 @@
-
+action,ticker,shares,limit_price,notional,rationale
+SELL,CIEN,1,554.46,554.46,SELL at close — rotate out (dropped from top-N)
+SELL,COHR,2,382.45,764.9,SELL at close — rotate out (dropped from top-N)
+SELL,LITE,1,970.7,970.7,SELL at close — rotate out (dropped from top-N)
+SELL,WDC,2,482.02,964.04,SELL at close — rotate out (dropped from top-N)
+BUY,AMD,2,424.1,848.2,BUY at close — rotate in (new top-N)
+BUY,ENPH,19,52.89,1004.91,BUY at close — rotate in (new top-N)
+BUY,PLUG,266,3.78,1005.48,BUY at close — rotate in (new top-N)
+BUY,POET,63,15.97,1006.11,BUY at close — rotate in (new top-N)
