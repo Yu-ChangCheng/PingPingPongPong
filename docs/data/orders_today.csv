@@ -1,10 +1,10 @@
 action,ticker,shares,limit_price,notional,rationale
-SELL,AMD,2,516.13,1032.26,SELL at close — rotate out (dropped from top-N)
-SELL,ENPH,19,36.35,690.65,SELL at close — rotate out (dropped from top-N)
-SELL,INTC,9,102.94,926.46,SELL at close — rotate out (dropped from top-N)
-SELL,PLUG,266,2.1,558.6,SELL at close — rotate out (dropped from top-N)
-BUY,DELL,1,567.29,567.29,BUY at close — rotate in (new top-N)
-BUY,HPE,12,62.09,745.08,BUY at close — rotate in (new top-N)
-BUY,MARA,65,11.98,778.7,BUY at close — rotate in (new top-N)
-BUY,POET,35,7.95,278.25,BUY at close — add to 1/N equity
-BUY,SMR,90,8.61,774.9,BUY at close — rotate in (new top-N)
+SELL,DELL,1,464.99,464.99,SELL at close — rotate out (dropped from top-N)
+SELL,HPE,12,57.77,693.24,SELL at close — rotate out (dropped from top-N)
+SELL,MARA,65,6.76,439.4,SELL at close — rotate out (dropped from top-N)
+SELL,SMR,90,5.28,475.2,SELL at close — rotate out (dropped from top-N)
+BUY,AMD,1,522.0,522.0,BUY at close — rotate in (new top-N)
+BUY,INTC,6,87.52,525.12,BUY at close — rotate in (new top-N)
+BUY,POET,9,5.34,48.06,BUY at close — add to 1/N equity
+BUY,TEAM,2,221.44,442.88,BUY at close — rotate in (new top-N)
+BUY,ZS,2,254.74,509.48,BUY at close — rotate in (new top-N)
