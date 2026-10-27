@@ -1,5 +1,5 @@
 action,ticker,shares,limit_price,notional,rationale
-SELL,TEAM,2,223.41,446.83,SELL at close — rotate out (dropped from top-N)
-SELL,ZS,2,260.45,520.9,SELL at close — rotate out (dropped from top-N)
-BUY,OKTA,2,220.01,440.02,BUY at close — rotate in (new top-N)
-BUY,SMR,110,5.27,579.7,BUY at close — rotate in (new top-N)
+SELL,OKTA,2,226.07,452.14,SELL at close — rotate out (dropped from top-N)
+SELL,SMR,110,5.7,627.0,SELL at close — rotate out (dropped from top-N)
+BUY,ENPH,20,29.76,595.2,BUY at close — rotate in (new top-N)
+BUY,ZS,2,260.15,520.3,BUY at close — rotate in (new top-N)
