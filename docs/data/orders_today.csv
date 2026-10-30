@@ -1,7 +1,6 @@
 action,ticker,shares,limit_price,notional,rationale
-SELL,HOOD,6,91.59,549.54,SELL at close — rotate out (dropped from top-N)
-SELL,SMR,105,5.92,621.6,SELL at close — rotate out (dropped from top-N)
-SELL,ZS,2,247.82,495.64,SELL at close — rotate out (dropped from top-N)
-BUY,OKTA,2,221.86,443.72,BUY at close — rotate in (new top-N)
-BUY,PLTR,3,196.42,589.26,BUY at close — rotate in (new top-N)
-BUY,POET,104,5.66,588.64,BUY at close — rotate in (new top-N)
+SELL,OKTA,2,208.24,416.48,SELL at close — rotate out (dropped from top-N)
+SELL,PLTR,3,184.11,552.33,SELL at close — rotate out (dropped from top-N)
+BUY,HOOD,6,84.99,509.94,BUY at close — rotate in (new top-N)
+BUY,INTC,2,65.76,131.52,BUY at close — add to 1/N equity
+BUY,SOFI,31,16.76,519.56,BUY at close — rotate in (new top-N)
