@@ -1,6 +1,1 @@
-action,ticker,shares,limit_price,notional,rationale
-SELL,HOOD,1,83.84,83.84,SELL at close — trim to 1/N equity
-SELL,INTC,8,59.97,479.76,SELL at close — rotate out (dropped from top-N)
-SELL,SOFI,31,16.6,514.6,SELL at close — rotate out (dropped from top-N)
-BUY,SMR,93,5.35,497.55,BUY at close — rotate in (new top-N)
-BUY,TDOC,57,8.63,491.91,BUY at close — rotate in (new top-N)
+
