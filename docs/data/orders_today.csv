@@ -1,1 +1,3 @@
-
+action,ticker,shares,limit_price,notional,rationale
+SELL,HOOD,5,85.68,428.4,SELL at close — rotate out (dropped from top-N)
+BUY,OKTA,2,189.68,379.36,BUY at close — rotate in (new top-N)
