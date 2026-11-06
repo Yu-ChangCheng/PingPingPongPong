@@ -1,3 +1,6 @@
 action,ticker,shares,limit_price,notional,rationale
-SELL,HOOD,5,85.68,428.4,SELL at close — rotate out (dropped from top-N)
-BUY,OKTA,2,189.68,379.36,BUY at close — rotate in (new top-N)
+SELL,OKTA,2,191.05,382.1,SELL at close — rotate out (dropped from top-N)
+SELL,TDOC,57,9.7,552.9,SELL at close — rotate out (dropped from top-N)
+BUY,AMC,146,3.52,513.92,BUY at close — rotate in (new top-N)
+BUY,RUN,58,8.79,509.82,BUY at close — rotate in (new top-N)
+BUY,SMR,7,5.13,35.91,BUY at close — add to 1/N equity
