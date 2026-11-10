@@ -1,7 +1,5 @@
 action,ticker,shares,limit_price,notional,rationale
-SELL,AMC,146,3.14,458.44,SELL at close — rotate out (dropped from top-N)
-SELL,RUN,58,9.98,578.84,SELL at close — rotate out (dropped from top-N)
-SELL,SMR,100,5.08,508.0,SELL at close — rotate out (dropped from top-N)
-BUY,INTC,9,56.28,506.52,BUY at close — rotate in (new top-N)
-BUY,PLTR,3,160.38,481.14,BUY at close — rotate in (new top-N)
-BUY,SPCE,185,2.77,512.45,BUY at close — rotate in (new top-N)
+SELL,PLTR,3,169.2,507.6,SELL at close — rotate out (dropped from top-N)
+SELL,SPCE,185,2.87,530.95,SELL at close — rotate out (dropped from top-N)
+BUY,NET,1,293.75,293.75,BUY at close — rotate in (new top-N)
+BUY,SMR,100,5.44,544.0,BUY at close — rotate in (new top-N)
