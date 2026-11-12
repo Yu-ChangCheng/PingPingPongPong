@@ -1,3 +1,5 @@
 action,ticker,shares,limit_price,notional,rationale
-SELL,SMR,100,5.44,544.0,SELL at close — rotate out (dropped from top-N)
-BUY,SOFI,32,16.75,536.0,BUY at close — rotate in (new top-N)
+SELL,NET,1,305.8,305.8,SELL at close — rotate out (dropped from top-N)
+SELL,SOFI,32,16.37,523.84,SELL at close — rotate out (dropped from top-N)
+BUY,LCID,143,3.77,539.11,BUY at close — rotate in (new top-N)
+BUY,SMR,103,5.22,537.66,BUY at close — rotate in (new top-N)
