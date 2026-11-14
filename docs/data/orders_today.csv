@@ -1,3 +1,6 @@
 action,ticker,shares,limit_price,notional,rationale
-SELL,LCID,143,3.67,524.81,SELL at close — rotate out (dropped from top-N)
-BUY,NET,1,315.0,315.0,BUY at close — rotate in (new top-N)
+SELL,AMD,1,585.3,585.3,SELL at close — rotate out (dropped from top-N)
+SELL,NET,1,318.5,318.5,SELL at close — rotate out (dropped from top-N)
+BUY,DELL,1,371.17,371.17,BUY at close — rotate in (new top-N)
+BUY,RIOT,30,17.83,534.9,BUY at close — rotate in (new top-N)
+BUY,SMR,11,4.82,53.02,BUY at close — add to 1/N equity
