@@ -1,5 +1,6 @@
 action,ticker,shares,limit_price,notional,rationale
-SELL,DELL,1,320.55,320.55,SELL at close — rotate out (dropped from top-N)
-SELL,RIOT,30,17.06,511.8,SELL at close — rotate out (dropped from top-N)
-BUY,HOOD,6,72.06,432.36,BUY at close — rotate in (new top-N)
-BUY,KEYS,1,285.63,285.63,BUY at close — rotate in (new top-N)
+SELL,HOOD,6,69.19,415.14,SELL at close — rotate out (dropped from top-N)
+SELL,INTC,1,55.17,55.17,SELL at close — trim to 1/N equity
+SELL,KEYS,1,284.45,284.45,SELL at close — rotate out (dropped from top-N)
+BUY,DOCU,6,75.93,455.58,BUY at close — rotate in (new top-N)
+BUY,POET,7,4.4,30.8,BUY at close — add to 1/N equity
