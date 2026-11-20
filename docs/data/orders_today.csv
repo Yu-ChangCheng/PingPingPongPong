@@ -1,6 +1,3 @@
 action,ticker,shares,limit_price,notional,rationale
-SELL,DOCU,6,76.58,459.48,SELL at close — rotate out (dropped from top-N)
-SELL,POET,111,4.25,471.75,SELL at close — rotate out (dropped from top-N)
-BUY,OKTA,2,195.61,391.22,BUY at close — rotate in (new top-N)
-BUY,SMR,9,3.91,35.19,BUY at close — add to 1/N equity
-BUY,SOFI,34,14.11,479.74,BUY at close — rotate in (new top-N)
+SELL,SOFI,34,14.11,479.74,SELL at close — rotate out (dropped from top-N)
+BUY,CRWD,2,237.03,474.06,BUY at close — rotate in (new top-N)
