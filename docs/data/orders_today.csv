@@ -1,3 +1,5 @@
 action,ticker,shares,limit_price,notional,rationale
-SELL,SOFI,34,14.11,479.74,SELL at close — rotate out (dropped from top-N)
-BUY,CRWD,2,237.03,474.06,BUY at close — rotate in (new top-N)
+SELL,CRWD,2,243.46,486.92,SELL at close — rotate out (dropped from top-N)
+SELL,INTC,8,55.72,445.76,SELL at close — rotate out (dropped from top-N)
+BUY,RIOT,27,17.73,478.71,BUY at close — rotate in (new top-N)
+BUY,SOFI,36,13.53,487.08,BUY at close — rotate in (new top-N)
