@@ -1,7 +1,8 @@
 action,ticker,shares,limit_price,notional,rationale
-SELL,OKTA,2,206.28,412.56,SELL at close — rotate out (dropped from top-N)
-SELL,SOFI,36,13.09,471.24,SELL at close — rotate out (dropped from top-N)
-BUY,DELL,1,334.91,334.91,BUY at close — rotate in (new top-N)
-BUY,INTC,7,59.66,417.62,BUY at close — rotate in (new top-N)
-BUY,NVDA,2,165.05,330.1,BUY at close — rotate in (new top-N)
-BUY,SMR,11,3.53,38.83,BUY at close — add to 1/N equity
+SELL,DELL,1,295.28,295.28,SELL at close — rotate out (dropped from top-N)
+SELL,NVDA,2,155.38,310.76,SELL at close — rotate out (dropped from top-N)
+SELL,RIOT,27,16.34,441.18,SELL at close — rotate out (dropped from top-N)
+BUY,AMD,1,413.27,413.27,BUY at close — rotate in (new top-N)
+BUY,INTC,1,54.8,54.8,BUY at close — add to 1/N equity
+BUY,SOFI,34,12.86,437.24,BUY at close — rotate in (new top-N)
+BUY,ZS,1,231.62,231.62,BUY at close — rotate in (new top-N)
