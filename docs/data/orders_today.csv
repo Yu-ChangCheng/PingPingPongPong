@@ -1,3 +1,5 @@
 action,ticker,shares,limit_price,notional,rationale
-SELL,AMD,1,406.03,406.03,SELL at close — rotate out (dropped from top-N)
-BUY,HOOD,6,65.78,394.68,BUY at close — rotate in (new top-N)
+SELL,HOOD,6,65.78,394.68,SELL at close — rotate out (dropped from top-N)
+SELL,SOFI,34,13.07,444.38,SELL at close — rotate out (dropped from top-N)
+BUY,AMD,1,406.03,406.03,BUY at close — rotate in (new top-N)
+BUY,NVDA,2,149.3,298.6,BUY at close — rotate in (new top-N)
